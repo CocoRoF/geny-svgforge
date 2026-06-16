@@ -10,35 +10,56 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.resources import files as _pkg_files
 
 from fontTools.ttLib import TTCollection, TTFont
 
-# 시스템에서 흔히 발견되는 한글 지원 폰트 후보. 첫 번째로 존재하는 것을 쓴다.
-# (override: GENY_SVGFORGE_FONT / GENY_SVGFORGE_FONT_BOLD 환경변수)
+# 패키지에 번들된 한글 폰트(OFL NanumGothic). 최소 Docker 등 폰트가 없는 환경에서도
+# 항상 동작하도록 이 폰트를 기본으로 쓴다. 시스템 폰트는 마지막 폴백,
+# 사용자 지정은 env(GENY_SVGFORGE_FONT / _BOLD) override.
+_BUNDLED_REGULAR = "NanumGothic-Regular.ttf"
+_BUNDLED_BOLD = "NanumGothic-Bold.ttf"
+_BUNDLED_FAMILY = "NanumGothic"
+
+# 시스템 폰트 후보 — 번들이 없을 때의 마지막 폴백.
 _REGULAR_CANDIDATES = [
     ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "Noto Sans CJK KR"),
     ("/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf", "Noto Sans KR"),
     ("/System/Library/Fonts/AppleSDGothicNeo.ttc", "Apple SD Gothic Neo"),
-    ("/usr/share/fonts/truetype/nanum/NanumGothic.ttf", "NanumGothic"),
 ]
 _BOLD_CANDIDATES = [
     ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", "Noto Sans CJK KR"),
     ("/usr/share/fonts/truetype/noto/NotoSansKR-Bold.ttf", "Noto Sans KR"),
 ]
 
-# SVG 에 들어갈 font-family (측정 폰트 + 안전한 폴백)
-FONT_FAMILY = "Noto Sans KR, Noto Sans CJK KR, Apple SD Gothic Neo, NanumGothic, sans-serif"
+# SVG 에 들어갈 font-family. 번들 폰트(NanumGothic) 우선 + 안전한 폴백.
+FONT_FAMILY = "NanumGothic, Noto Sans KR, Noto Sans CJK KR, Apple SD Gothic Neo, sans-serif"
 
 
-def _resolve(candidates, env_key) -> tuple[str, str]:
+def _bundled_path(name: str) -> str | None:
+    try:
+        p = _pkg_files("geny_svgforge").joinpath("fonts", name)
+        return str(p) if p.is_file() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _resolve(env_key: str, bundled_name: str, candidates) -> tuple[str, str]:
+    # 1) 사용자 지정 (env)
     override = os.environ.get(env_key)
     if override and os.path.exists(override):
         return override, ""
+    # 2) 패키지 번들 폰트 (기본 — 어디서든 동작)
+    b = _bundled_path(bundled_name)
+    if b:
+        return b, _BUNDLED_FAMILY
+    # 3) 시스템 폰트 (마지막 폴백)
     for path, family in candidates:
         if os.path.exists(path):
             return path, family
     raise FileNotFoundError(
-        "한글 지원 폰트를 찾지 못했습니다. GENY_SVGFORGE_FONT 환경변수로 .ttf/.otf 경로를 지정하세요."
+        "한글 지원 폰트를 찾지 못했습니다 (번들 폰트 누락 가능성). "
+        "GENY_SVGFORGE_FONT 환경변수로 .ttf/.otf 경로를 지정하세요."
     )
 
 
@@ -147,10 +168,10 @@ EMBED_FAMILY = "GenySVGForge"
 @lru_cache(maxsize=4)
 def default_fonts() -> tuple[FontMetrics, FontMetrics]:
     """(regular, bold) FontMetrics. bold 가 없으면 regular 로 대체."""
-    rpath, rfam = _resolve(_REGULAR_CANDIDATES, "GENY_SVGFORGE_FONT")
+    rpath, rfam = _resolve("GENY_SVGFORGE_FONT", _BUNDLED_REGULAR, _REGULAR_CANDIDATES)
     reg = FontMetrics.load(rpath, rfam)
     try:
-        bpath, bfam = _resolve(_BOLD_CANDIDATES, "GENY_SVGFORGE_FONT_BOLD")
+        bpath, bfam = _resolve("GENY_SVGFORGE_FONT_BOLD", _BUNDLED_BOLD, _BOLD_CANDIDATES)
         bold = FontMetrics.load(bpath, bfam)
     except FileNotFoundError:
         bold = reg

@@ -140,6 +140,10 @@ Three layers: **Spec (JSON Schema) → Layout Engine → Renderer**.
 - Visual self-repair loop: render → rasterize → multimodal critique → fix spec → re-render
 - More diagram types, themes, templates, accessibility (`<title>`/`<desc>`/aria)
 
+## Fonts
+
+The package **bundles NanumGothic (Regular + Bold, SIL OFL)** so it works out of the box in any environment — including minimal Docker images with no system fonts. Text is measured against this font and a glyph subset of it is embedded in the SVG, so layout and rendering match everywhere. Override with the `GENY_SVGFORGE_FONT` / `GENY_SVGFORGE_FONT_BOLD` environment variables (path to a `.ttf`/`.otf`) to use a different font.
+
 ## License
 
-MIT. Text is measured against — and a subset is embedded from — a system font (e.g. SIL OFL Noto Sans CJK). When embedding, the embedded font's own license applies.
+MIT for the library code. The bundled font NanumGothic is licensed under the SIL Open Font License 1.1 (`src/geny_svgforge/fonts/OFL.txt`); embedding it in output SVGs is permitted under the OFL.
