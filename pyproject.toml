@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geny-svgforge"
-version = "0.6.0"
+version = "0.7.0"
 description = "AI가 좌표 대신 의미(spec)만 내면 결정론적 레이아웃으로 깨끗한 다이어그램 SVG를 만드는 라이브러리"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -152,6 +152,22 @@ def test_multi_edge_and_legend():
     assert "입력" in r.svg and "출력" in r.svg
 
 
+def test_custom_color_edge_style_and_injection_guard():
+    r = render({
+        "type": "flow",
+        "nodes": [{"id": "a", "text": "A", "color": "#16a34a"},
+                  {"id": "b", "text": "B", "color": "blue"}],
+        "edges": [{"from": "a", "to": "b", "arrow": True, "style": "orthogonal"}],
+    })
+    assert r.warnings == []
+    assert "#16a34a" in r.svg
+    # SVG 속성 주입 시도는 패턴 검증에서 거부되어야 한다
+    bad = validate_spec({"type": "flow",
+                         "nodes": [{"id": "a", "text": "A", "color": '#fff" onload="evil'}],
+                         "edges": []})
+    assert bad["ok"] is False
+
+
 def test_long_node_text_wraps():
     long = "이것은 한 박스 안에 들어가기에는 지나치게 긴 설명 문장이라 자동 줄바꿈이 필요하다"
     r = render({"type": "node-graph", "nodes": [{"text": long, "row": 0, "col": 0}]})

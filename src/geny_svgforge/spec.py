@@ -15,6 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 Variant = Literal["default", "accent", "highlight", "muted", "good"]
 EdgeColor = Literal["accent", "blue", "gray", "good"]
 Shape = Literal["rect", "pill", "ellipse", "diamond", "cylinder", "hexagon", "parallelogram"]
+EdgeStyle = Literal["curved", "straight", "orthogonal"]
+# 커스텀 색 — SVG 속성 주입 방지를 위해 hex(#) 또는 CSS 색이름만 허용.
+_COLOR_RE = r"^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$"
 
 
 # ── 일반 node-graph ────────────────────────────────────────────
@@ -28,6 +31,8 @@ class GNode(BaseModel):
     variant: Variant = Field("default", description="색상 변형")
     shape: Shape = Field("rect", description="노드 도형")
     sublabel: Optional[str] = Field(None, description="박스 아래 작은 라벨 (예: 'pos 0', 'fast sin')")
+    color: Optional[str] = Field(None, pattern=_COLOR_RE, description="채움/테두리 커스텀 색 (hex 또는 색이름). variant 무시")
+    text_color: Optional[str] = Field(None, pattern=_COLOR_RE, description="글자 색 (생략 시 자동 대비)")
 
 
 class GEdge(BaseModel):
@@ -38,6 +43,7 @@ class GEdge(BaseModel):
     color: EdgeColor = "gray"
     arrow: bool = Field(False, description="끝에 화살표 머리")
     dashed: bool = False
+    style: EdgeStyle = Field("curved", description="curved | straight | orthogonal(직각)")
     label: Optional[str] = None
 
 
@@ -101,6 +107,8 @@ class FNode(BaseModel):
     variant: Variant = "default"
     shape: Shape = "rect"
     sublabel: Optional[str] = None
+    color: Optional[str] = Field(None, pattern=_COLOR_RE)
+    text_color: Optional[str] = Field(None, pattern=_COLOR_RE)
 
 
 class FlowSpec(BaseModel):

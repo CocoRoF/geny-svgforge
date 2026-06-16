@@ -76,6 +76,35 @@ def _shape_metrics(shape: str, w: float, h: float) -> tuple[float, float]:
     return w, h
 
 
+def _parse_hex(c: str):
+    if not c.startswith("#"):
+        return None
+    h = c[1:]
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    if len(h) != 6:
+        return None
+    try:
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def _contrast_text(c: str) -> str:
+    rgb = _parse_hex(c)
+    if not rgb:
+        return "#15172a"
+    lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255
+    return "#15172a" if lum > 0.6 else "#ffffff"
+
+
+def _darken(c: str, f: float = 0.72) -> str:
+    rgb = _parse_hex(c)
+    if not rgb:
+        return c
+    return "#%02x%02x%02x" % tuple(max(0, min(255, int(v * f))) for v in rgb)
+
+
 def _arrow_head(x: float, y: float, dir_: str, color: str, s: float = 5.0) -> PathEl:
     if dir_ == "down":
         d = f"M {x-s:.1f} {y-s*1.7:.1f} L {x+s:.1f} {y-s*1.7:.1f} L {x:.1f} {y:.1f} Z"
@@ -205,7 +234,12 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
                 bx = xcur
                 xcur += w + COL_GAP
             box = Rect(bx, cur + (bh - h) / 2, w, h)
-            fill, stroke, txt = th[f"token_{n.variant}"]
+            if n.color:
+                fill, stroke, txt = n.color, _darken(n.color), (n.text_color or _contrast_text(n.color))
+            else:
+                fill, stroke, txt = th[f"token_{n.variant}"]
+                if n.text_color:
+                    txt = n.text_color
             els.append(RectEl(box.x, box.y, box.w, box.h, BOX_RX, fill, stroke, 1.6, role="box", shape=shape))
             n_lines = len(lines)
             ty_off = 6 if shape == "cylinder" else 0
@@ -321,6 +355,20 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
             mx = (sx + ex) / 2
             d = f"M {sx:.1f} {sy:.1f} C {mx:.1f} {sy:.1f}, {mx:.1f} {ey:.1f}, {ex:.1f} {ey:.1f}"
             lx, ly = mx, (sy + ey) / 2
+
+        # 엣지 스타일 — straight/orthogonal 은 곡선 d 를 덮어씀 (lane 우회는 곡선 유지)
+        if e.style == "straight":
+            d = f"M {sx:.1f} {sy:.1f} L {ex:.1f} {ey:.1f}"
+        elif e.style == "orthogonal" and lane is None:
+            if abs(dy) >= abs(dx):
+                my = (sy + ey) / 2
+                d = (f"M {sx:.1f} {sy:.1f} L {sx:.1f} {my:.1f} "
+                     f"L {ex:.1f} {my:.1f} L {ex:.1f} {ey:.1f}")
+            else:
+                mx2 = (sx + ex) / 2
+                d = (f"M {sx:.1f} {sy:.1f} L {mx2:.1f} {sy:.1f} "
+                     f"L {mx2:.1f} {ey:.1f} L {ex:.1f} {ey:.1f}")
+
         xs = [sx, ex] + ([lane] if lane is not None else [])
         approx = Rect(min(xs), min(sy, ey), max(1.0, max(xs) - min(xs)), max(1.0, abs(ey - sy)))
         els.append(PathEl(d, col, 2.4, "none", approx, dashed=e.dashed))
@@ -470,7 +518,8 @@ def _layer_flow(spec: FlowSpec) -> NodeGraphSpec:
             n = by_id[nid]
             row, col = (o, L) if spec.direction == "right" else (L, o)
             gnodes.append(GNode(text=n.text, row=row, col=col, id=n.id,
-                                variant=n.variant, shape=n.shape, sublabel=n.sublabel))
+                                variant=n.variant, shape=n.shape, sublabel=n.sublabel,
+                                color=n.color, text_color=n.text_color))
     return NodeGraphSpec(
         type="node-graph", title=spec.title, subtitle=spec.subtitle,
         nodes=gnodes, edges=spec.edges, groups=spec.groups, legend=spec.legend,
