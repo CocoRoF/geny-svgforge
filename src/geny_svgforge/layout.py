@@ -26,6 +26,7 @@ BOX_RX = 9
 NOTE_W = 248
 NOTE_PAD = 18
 SIDE_GAP = 40
+GROUP_PAD = 15
 
 
 def _wrap(text: str, max_w: float, fm: FontMetrics, size: float) -> list[str]:
@@ -130,7 +131,9 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
     if spec.row_labels:
         rl_w = max(reg.text_width(t, rl_sz) for t in spec.row_labels.values()) + 16
 
-    grid_x0 = PAD + rl_w
+    groups = list(getattr(spec, "groups", []) or [])
+    group_inset = GROUP_PAD if groups else 0.0
+    grid_x0 = PAD + group_inset + rl_w
 
     # 열 좌표 산출 — grid: col 정렬 / center: 행마다 가운데 정렬
     if align == "grid":
@@ -163,6 +166,8 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
         els.append(TextEl(PAD, y + sub_sz * 0.82, spec.subtitle, sub_sz, th["subtitle"], "normal", "start", w))
         y += sub_sz * 1.7
     y += fs * 0.6
+    if groups:
+        y += GROUP_PAD + slab_sz   # 그룹 상단 테두리 + 라벨 공간 확보
 
     # 열 라벨 (위) — grid 모드만
     if align == "grid" and spec.col_labels:
@@ -179,6 +184,7 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
     id_row: dict[str, int] = {}
     ROW_GAP = fs * 2.0
 
+    node_start_idx = len(els)   # 그룹 박스를 노드 뒤에 삽입할 위치
     cur = y
     for r in range(nrows):
         row_top[r] = cur
@@ -215,6 +221,27 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
         row_bottom[r] = cur + bh + (slab_zone if row_has_sub[r] else 0)
         cur = row_bottom[r] + ROW_GAP
     grid_bottom = cur - ROW_GAP
+
+    # ── 그룹 컨테이너 (멤버 노드 bbox 를 감싸 노드 뒤에 삽입) ──
+    if groups:
+        gels: list = []
+        for grp in groups:
+            rects = [id_rect[n] for n in grp.nodes if n in id_rect]
+            if not rects:
+                continue
+            minx = min(r.x for r in rects)
+            miny = min(r.y for r in rects)
+            maxx = max(r.right for r in rects)
+            maxy = max(r.bottom for r in rects)
+            gx, gy = minx - GROUP_PAD, miny - GROUP_PAD
+            gw, gh = (maxx - minx) + 2 * GROUP_PAD, (maxy - miny) + 2 * GROUP_PAD
+            _f, gstroke, glab = th[f"token_{grp.variant}"]
+            gels.append(RectEl(gx, gy, gw, gh, 14, th["group_bg"], gstroke, 1.4))
+            if grp.label:
+                lw = reg.text_width(grp.label, slab_sz)
+                gels.append(RectEl(gx + 12, gy - slab_sz * 0.66, lw + 12, slab_sz + 4, 0, th["bg"], "none", 0.0))
+                gels.append(TextEl(gx + 18, gy + slab_sz * 0.34, grp.label, slab_sz, glab, "bold", "start", lw))
+        els[node_start_idx:node_start_idx] = gels
 
     # ── edges (경계 내부 한정 라우팅 + 라벨) ──
     def _edge_label(lx: float, ly: float, label: str) -> None:
@@ -405,7 +432,8 @@ def _layer_flow(spec: FlowSpec) -> NodeGraphSpec:
                                 variant=n.variant, shape=n.shape, sublabel=n.sublabel))
     return NodeGraphSpec(
         type="node-graph", title=spec.title, subtitle=spec.subtitle,
-        nodes=gnodes, edges=spec.edges, note=spec.note, caption=spec.caption,
+        nodes=gnodes, edges=spec.edges, groups=spec.groups,
+        note=spec.note, caption=spec.caption,
         theme=spec.theme, font_size=spec.font_size,
     )
 

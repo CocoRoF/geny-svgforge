@@ -16,6 +16,7 @@ LIGHT = {
     "col_label": "#6b7280",
     "note_bg": "#f7f8fc",
     "note_stroke": "#e6e8f0",
+    "group_bg": "#fbfcff",
     "note_title": "#1e2340",
     "note_text": "#6b7280",
     # 박스 variant: (fill, stroke, text)
@@ -41,6 +42,7 @@ DARK = {
     "col_label": "#a6acc4",
     "note_bg": "#1c1f36",
     "note_stroke": "#2a2d4a",
+    "group_bg": "#181b30",
     "note_title": "#eef0ff",
     "note_text": "#a6acc4",
     "token_default": ("#23284a", "#3f4a82", "#cdd6f7"),

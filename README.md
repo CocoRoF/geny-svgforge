@@ -140,6 +140,8 @@ Three layers: **Spec (JSON Schema) → Layout Engine → Renderer**.
 
 Node `variant`: `default · accent · highlight · muted · good`. Node `shape`: `rect · pill · ellipse · diamond · cylinder · hexagon · parallelogram` (auto-sized to text). Edge `color`: `accent · blue · gray · good`, with optional `arrow`, `dashed`, and `label`.
 
+Wrap nodes in a labeled container (subgraph) with `groups: [{ "label": "...", "nodes": ["id1", "id2"], "variant": "accent" }]` — drawn as a fieldset-style box behind the members. Works in both `flow` and `node-graph`.
+
 ```python
 # flow: no coordinates — the engine lays it out
 render({

@@ -122,6 +122,21 @@ def test_flow_self_loop_renders_clean():
     assert r.warnings == []
 
 
+def test_groups_render_clean_and_flow_carries_them():
+    spec = {
+        "type": "flow",
+        "nodes": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}, {"id": "c", "text": "C"}],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
+        "groups": [{"label": "묶음", "nodes": ["a", "b"], "variant": "accent"}],
+    }
+    r = render(spec)
+    assert r.warnings == []
+    assert "묶음" in r.svg
+    from geny_svgforge.layout import _layer_flow
+    from geny_svgforge.spec import FlowSpec
+    assert len(_layer_flow(FlowSpec.model_validate(spec)).groups) == 1
+
+
 def test_long_node_text_wraps():
     long = "이것은 한 박스 안에 들어가기에는 지나치게 긴 설명 문장이라 자동 줄바꿈이 필요하다"
     r = render({"type": "node-graph", "nodes": [{"text": long, "row": 0, "col": 0}]})

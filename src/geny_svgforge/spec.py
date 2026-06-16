@@ -48,6 +48,16 @@ class Note(BaseModel):
     lines: list[str] = Field(default_factory=list)
 
 
+class Group(BaseModel):
+    """노드 묶음을 감싸는 라벨 박스(서브그래프). 멤버 노드들의 bbox 를 둘러싼다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: Optional[str] = None
+    nodes: list[str] = Field(..., min_length=1, description="묶을 노드 id 목록")
+    variant: Variant = Field("muted", description="테두리/라벨 색")
+
+
 class NodeGraphSpec(BaseModel):
     """그리드에 놓인 노드 + 임의의 edge 로 구성된 일반 다이어그램.
 
@@ -62,6 +72,7 @@ class NodeGraphSpec(BaseModel):
     subtitle: Optional[str] = None
     nodes: list[GNode] = Field(..., min_length=1)
     edges: list[GEdge] = Field(default_factory=list)
+    groups: list[Group] = Field(default_factory=list, description="노드 묶음 컨테이너")
     # 행/열 헤더. 키는 row/col 인덱스(JSON 에선 문자열 키도 자동 정수 변환).
     row_labels: dict[int, str] = Field(default_factory=dict, description="행 왼쪽 라벨 {row: text}")
     col_labels: dict[int, str] = Field(default_factory=dict, description="열 위 라벨 {col: text}")
@@ -97,6 +108,7 @@ class FlowSpec(BaseModel):
     direction: Literal["down", "right"] = "down"
     nodes: list[FNode] = Field(..., min_length=1)
     edges: list[GEdge] = Field(default_factory=list)
+    groups: list[Group] = Field(default_factory=list, description="노드 묶음 컨테이너")
     note: Optional[Note] = None
     caption: Optional[str] = None
     theme: Literal["light", "dark"] = "light"
