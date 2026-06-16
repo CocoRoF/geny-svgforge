@@ -97,6 +97,38 @@ def test_flow_auto_layout_renders_clean():
     assert r.svg.startswith("<svg") and "<title>" not in r.svg or True
 
 
+def test_flow_cycle_does_not_inflate_layers():
+    from geny_svgforge.layout import _layer_flow
+    from geny_svgforge.spec import FlowSpec
+    ng = _layer_flow(FlowSpec.model_validate({
+        "type": "flow",
+        "nodes": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}, {"id": "c", "text": "C"}],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}, {"from": "c", "to": "a"}],
+    }))
+    rows = {n.id: n.row for n in ng.nodes}
+    assert rows == {"a": 0, "b": 1, "c": 2}  # back edge c->a 무시 → 인플레이션 없음
+    assert render({"type": "flow",
+                   "nodes": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}],
+                   "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}]}).warnings == []
+
+
+def test_flow_self_loop_renders_clean():
+    r = render({
+        "type": "flow",
+        "nodes": [{"id": "a", "text": "poll", "shape": "diamond"}, {"id": "b", "text": "done"}],
+        "edges": [{"from": "a", "to": "a", "arrow": True, "label": "wait"},
+                  {"from": "a", "to": "b", "arrow": True}],
+    })
+    assert r.warnings == []
+
+
+def test_long_node_text_wraps():
+    long = "이것은 한 박스 안에 들어가기에는 지나치게 긴 설명 문장이라 자동 줄바꿈이 필요하다"
+    r = render({"type": "node-graph", "nodes": [{"text": long, "row": 0, "col": 0}]})
+    assert r.warnings == []
+    assert r.width < 360  # 줄바꿈으로 폭이 제한됨 (미적용 시 700+)
+
+
 def test_flow_layering_assigns_rows():
     from geny_svgforge.layout import _layer_flow
     from geny_svgforge.spec import FlowSpec

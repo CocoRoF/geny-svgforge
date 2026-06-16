@@ -20,6 +20,7 @@ from .themes import get_theme
 PAD = 28
 BOX_PAD_X = 16
 BOX_MIN_W = 52
+MAX_NODE_W = 240   # 노드 텍스트가 이보다 넓으면 자동 줄바꿈
 COL_GAP = 24
 BOX_RX = 9
 NOTE_W = 248
@@ -109,7 +110,9 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
     # 노드 측정 (도형 보정 포함)
     cell: dict[tuple[int, int], dict] = {}
     for n in nodes:
-        lines = n.text.split("\n")
+        lines: list[str] = []
+        for raw in n.text.split("\n"):
+            lines.extend(_wrap(raw, MAX_NODE_W, reg, fs) if raw else [""])
         tw = max((reg.text_width(ln, fs) for ln in lines), default=0)
         w = max(BOX_MIN_W, tw + BOX_PAD_X * 2)
         h = box_h0 + (len(lines) - 1) * line_h
@@ -150,17 +153,14 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
         grid_right = grid_x0 + content_w
 
     els: list = []
-    header_right = 0.0
     y = PAD
     if spec.title:
         w = bold.text_width(spec.title, title_sz)
         els.append(TextEl(PAD, y + title_sz * 0.82, spec.title, title_sz, th["title"], "bold", "start", w))
-        header_right = max(header_right, PAD + w)
         y += title_sz * 1.25
     if spec.subtitle:
         w = reg.text_width(spec.subtitle, sub_sz)
         els.append(TextEl(PAD, y + sub_sz * 0.82, spec.subtitle, sub_sz, th["subtitle"], "normal", "start", w))
-        header_right = max(header_right, PAD + w)
         y += sub_sz * 1.7
     y += fs * 0.6
 
@@ -217,12 +217,32 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
     grid_bottom = cur - ROW_GAP
 
     # ── edges (경계 내부 한정 라우팅 + 라벨) ──
+    def _edge_label(lx: float, ly: float, label: str) -> None:
+        lw = reg.text_width(label, slab_sz)
+        els.append(RectEl(lx - lw / 2 - 5, ly - slab_sz * 0.72, lw + 10, slab_sz + 5,
+                          (slab_sz + 5) / 2, th["bg"], "none", 0.0))
+        els.append(TextEl(lx, ly + slab_sz * 0.30, label, slab_sz, th["row_label"], "normal", "middle", lw))
+
     for e in spec.edges:
         a = id_rect.get(e.from_)
         b = id_rect.get(e.to)
         if not a or not b:
             continue
         col = th[f"connector_{e.color}"]
+
+        # 자기 루프 — 노드 오른쪽에 작은 고리
+        if e.from_ == e.to:
+            sx, sy = a.right, a.y + a.h * 0.30
+            ex, ey = a.right, a.y + a.h * 0.70
+            bulge = a.right + 24
+            d = f"M {sx:.1f} {sy:.1f} C {bulge:.1f} {sy-4:.1f}, {bulge:.1f} {ey+4:.1f}, {ex:.1f} {ey:.1f}"
+            els.append(PathEl(d, col, 2.2, "none", Rect(a.right, sy - 4, bulge - a.right + 2, (ey - sy) + 8), dashed=e.dashed))
+            if e.arrow:
+                els.append(_arrow_head(ex, ey, "left", col))
+            if e.label:
+                _edge_label(bulge + 6 + reg.text_width(e.label, slab_sz) / 2, (sy + ey) / 2, e.label)
+            continue
+
         dx = b.cx - a.cx
         dy = b.cy - a.cy
         rs, rt = id_row.get(e.from_, 0), id_row.get(e.to, 0)
@@ -268,13 +288,7 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
         if e.arrow:
             els.append(_arrow_head(ex, ey, end_dir, col))
         if e.label:
-            lw = reg.text_width(e.label, slab_sz)
-            els.append(RectEl(lx - lw / 2 - 5, ly - slab_sz * 0.72, lw + 10, slab_sz + 5,
-                              (slab_sz + 5) / 2, th["bg"], "none", 0.0))
-            els.append(TextEl(lx, ly + slab_sz * 0.30, e.label, slab_sz, th["row_label"], "normal", "middle", lw))
-
-    content_bottom = grid_bottom
-    right_edge = grid_right
+            _edge_label(lx, ly, e.label)
 
     # ── note 사이드바 ──
     if spec.note:
@@ -298,11 +312,14 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
             fm = bold if weight == "bold" else reg
             w = fm.text_width(t, sz)
             els.append(TextEl(note_x + NOTE_PAD, note_y + ly, t, sz, c, weight, "start", w))
-        content_bottom = max(content_bottom, note_y + h)
-        right_edge = note_x + NOTE_W
+
+    # 캔버스 = 모든 요소 bbox 의 합집합 + 여백 (자기루프·레인·라벨·노트·헤더 전부 포함)
+    bboxes = [el.bbox() for el in els if el.bbox() is not None]
+    content_right = max((bb.right for bb in bboxes), default=grid_right)
+    content_bottom = max((bb.bottom for bb in bboxes), default=grid_bottom)
 
     cap_w = reg.text_width(spec.caption, caption_sz) if spec.caption else 0.0
-    canvas_w = max(right_edge + PAD, header_right + PAD, cap_w + 2 * PAD, PAD * 2 + 200)
+    canvas_w = max(content_right + PAD, cap_w + 2 * PAD, PAD * 2 + 200)
 
     y = content_bottom
     if spec.caption:
@@ -320,15 +337,44 @@ def _layer_flow(spec: FlowSpec) -> NodeGraphSpec:
     """flow → layer 자동 산출 후 node-graph 로 변환 (longest-path layering + barycenter 정렬)."""
     by_id = {n.id: n for n in spec.nodes}
     order_idx = {n.id: i for i, n in enumerate(spec.nodes)}
-    edges = [(e.from_, e.to) for e in spec.edges if e.from_ in by_id and e.to in by_id]
+    # self-edge 는 layering 에서 제외(자기 루프로 렌더), 나머지로 그래프 구성
+    raw = [(e.from_, e.to) for e in spec.edges
+           if e.from_ in by_id and e.to in by_id and e.from_ != e.to]
+    succ: dict[str, list[str]] = defaultdict(list)
+    for u, v in raw:
+        succ[u].append(v)
+
+    # 반복적 DFS 로 back edge(조상으로 향하는 엣지) 분류 → layering 에서 제외 → cycle 안전.
+    state: dict[str, int] = {nid: 0 for nid in by_id}  # 0 white · 1 gray · 2 black
+    back: set[tuple[str, str]] = set()
+    for root in by_id:
+        if state[root] != 0:
+            continue
+        state[root] = 1
+        stack = [(root, iter(succ[root]))]
+        while stack:
+            u, it = stack[-1]
+            for v in it:
+                sv = state.get(v, 0)
+                if sv == 1:
+                    back.add((u, v))
+                elif sv == 0:
+                    state[v] = 1
+                    stack.append((v, iter(succ[v])))
+                    break
+            else:
+                state[u] = 2
+                stack.pop()
+
+    dag = [(u, v) for (u, v) in raw if (u, v) not in back]
     preds: dict[str, list[str]] = defaultdict(list)
-    for u, v in edges:
+    for u, v in dag:
         preds[v].append(u)
 
     layer = {nid: 0 for nid in by_id}
-    for _ in range(len(by_id)):
+    for _ in range(len(by_id) + 1):
         changed = False
-        for u, v in edges:
+        for u, v in dag:
             if layer[v] < layer[u] + 1:
                 layer[v] = layer[u] + 1
                 changed = True
