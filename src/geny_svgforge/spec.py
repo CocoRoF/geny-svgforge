@@ -58,6 +58,15 @@ class Group(BaseModel):
     variant: Variant = Field("muted", description="테두리/라벨 색")
 
 
+class LegendItem(BaseModel):
+    """범례 항목 — 색 swatch + 라벨."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    variant: Variant = "default"
+
+
 class NodeGraphSpec(BaseModel):
     """그리드에 놓인 노드 + 임의의 edge 로 구성된 일반 다이어그램.
 
@@ -73,6 +82,7 @@ class NodeGraphSpec(BaseModel):
     nodes: list[GNode] = Field(..., min_length=1)
     edges: list[GEdge] = Field(default_factory=list)
     groups: list[Group] = Field(default_factory=list, description="노드 묶음 컨테이너")
+    legend: list[LegendItem] = Field(default_factory=list, description="색 범례")
     # 행/열 헤더. 키는 row/col 인덱스(JSON 에선 문자열 키도 자동 정수 변환).
     row_labels: dict[int, str] = Field(default_factory=dict, description="행 왼쪽 라벨 {row: text}")
     col_labels: dict[int, str] = Field(default_factory=dict, description="열 위 라벨 {col: text}")
@@ -109,6 +119,7 @@ class FlowSpec(BaseModel):
     nodes: list[FNode] = Field(..., min_length=1)
     edges: list[GEdge] = Field(default_factory=list)
     groups: list[Group] = Field(default_factory=list, description="노드 묶음 컨테이너")
+    legend: list[LegendItem] = Field(default_factory=list, description="색 범례")
     note: Optional[Note] = None
     caption: Optional[str] = None
     theme: Literal["light", "dark"] = "light"

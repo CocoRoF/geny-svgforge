@@ -10,6 +10,7 @@ edge 는 두 노드의 마주보는 면을 골라 **끝점이 만드는 사각�
 """
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 
 from .fonts import FontMetrics, default_fonts
@@ -250,6 +251,12 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
                           (slab_sz + 5) / 2, th["bg"], "none", 0.0))
         els.append(TextEl(lx, ly + slab_sz * 0.30, label, slab_sz, th["row_label"], "normal", "middle", lw))
 
+    # 같은 노드쌍을 잇는 다중 엣지 → 서로 겹치지 않게 평행 오프셋
+    pair_count: dict[tuple[str, str], int] = defaultdict(int)
+    for e in spec.edges:
+        pair_count[(e.from_, e.to)] += 1
+    pair_seen: dict[tuple[str, str], int] = defaultdict(int)
+
     for e in spec.edges:
         a = id_rect.get(e.from_)
         b = id_rect.get(e.to)
@@ -270,21 +277,26 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
                 _edge_label(bulge + 6 + reg.text_width(e.label, slab_sz) / 2, (sy + ey) / 2, e.label)
             continue
 
+        key = (e.from_, e.to)
+        pair_seen[key] += 1
+        cnt = pair_count[key]
+        off = ((pair_seen[key] - 1) - (cnt - 1) / 2) * 13.0 if cnt > 1 else 0.0
+
         dx = b.cx - a.cx
         dy = b.cy - a.cy
         rs, rt = id_row.get(e.from_, 0), id_row.get(e.to, 0)
         lane = None
         if abs(dy) >= abs(dx):  # 세로
             if dy >= 0:
-                sx, sy = a.cx, row_bottom[rs]
-                ex, ey = b.cx, b.y
+                sx, sy = a.cx + off, row_bottom[rs]
+                ex, ey = b.cx + off, b.y
                 end_dir = "down"
             else:
-                sx, sy = a.cx, a.y
-                ex, ey = b.cx, row_bottom[rt]
+                sx, sy = a.cx + off, a.y
+                ex, ey = b.cx + off, row_bottom[rt]
                 end_dir = "up"
             if abs(rt - rs) >= 2:
-                lane = max(a.right, b.right) + COL_GAP * 0.5
+                lane = max(a.right, b.right) + COL_GAP * 0.5 + off
                 seg = ey - sy
                 d = (f"M {sx:.1f} {sy:.1f} "
                      f"C {sx:.1f} {sy + 24:.1f}, {lane:.1f} {sy + 8:.1f}, {lane:.1f} {sy + 34:.1f} "
@@ -299,12 +311,12 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
                 lx, ly = (sx + ex) / 2, my
         else:                   # 가로
             if dx >= 0:
-                sx, sy = a.right, a.cy
-                ex, ey = b.x, b.cy
+                sx, sy = a.right, a.cy + off
+                ex, ey = b.x, b.cy + off
                 end_dir = "right"
             else:
-                sx, sy = a.x, a.cy
-                ex, ey = b.right, b.cy
+                sx, sy = a.x, a.cy + off
+                ex, ey = b.right, b.cy + off
                 end_dir = "left"
             mx = (sx + ex) / 2
             d = f"M {sx:.1f} {sy:.1f} C {mx:.1f} {sy:.1f}, {mx:.1f} {ey:.1f}, {ex:.1f} {ey:.1f}"
@@ -340,7 +352,21 @@ def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
             w = fm.text_width(t, sz)
             els.append(TextEl(note_x + NOTE_PAD, note_y + ly, t, sz, c, weight, "start", w))
 
-    # 캔버스 = 모든 요소 bbox 의 합집합 + 여백 (자기루프·레인·라벨·노트·헤더 전부 포함)
+    # ── 범례 (콘텐츠 아래 한 줄) ──
+    legend = list(getattr(spec, "legend", []) or [])
+    if legend:
+        prov_bottom = max((el.bbox().bottom for el in els if el.bbox() is not None), default=grid_bottom)
+        ly = prov_bottom + fs * 1.3
+        lx = PAD
+        sw = slab_sz + 3
+        for item in legend:
+            fill, stroke, _t = th[f"token_{item.variant}"]
+            els.append(RectEl(lx, ly - sw, sw, sw, 4, fill, stroke, 1.4))
+            lw = reg.text_width(item.label, slab_sz)
+            els.append(TextEl(lx + sw + 6, ly - sw * 0.2, item.label, slab_sz, th["row_label"], "normal", "start", lw))
+            lx += sw + 6 + lw + 20
+
+    # 캔버스 = 모든 요소 bbox 의 합집합 + 여백 (자기루프·레인·라벨·노트·헤더·범례 전부 포함)
     bboxes = [el.bbox() for el in els if el.bbox() is not None]
     content_right = max((bb.right for bb in bboxes), default=grid_right)
     content_bottom = max((bb.bottom for bb in bboxes), default=grid_bottom)
@@ -408,20 +434,35 @@ def _layer_flow(spec: FlowSpec) -> NodeGraphSpec:
         if not changed:
             break
 
+    succ_dag: dict[str, list[str]] = defaultdict(list)
+    for u, v in dag:
+        succ_dag[u].append(v)
+
     max_layer = max(layer.values()) if layer else 0
     by_layer: dict[int, list[str]] = defaultdict(list)
     for nid in by_id:
         by_layer[layer[nid]].append(nid)
     for L in by_layer:
         by_layer[L].sort(key=lambda nid: order_idx[nid])
-    # barycenter 정렬로 교차 감소
-    for _ in range(2):
-        for L in range(1, max_layer + 1):
-            pos_prev = {nid: i for i, nid in enumerate(by_layer[L - 1])}
-            def bary(nid: str) -> float:
-                ps = [pos_prev[p] for p in preds[nid] if p in pos_prev]
-                return sum(ps) / len(ps) if ps else float(order_idx[nid])
-            by_layer[L].sort(key=bary)
+
+    # 교차 최소화 — median heuristic 을 위/아래로 번갈아 sweep (Sugiyama 식).
+    def _order(L: int, adj: int, neigh: dict[str, list[str]]) -> None:
+        posmap = {nid: i for i, nid in enumerate(by_layer.get(adj, []))}
+        keyed = []
+        for j, nid in enumerate(by_layer[L]):
+            ps = sorted(posmap[x] for x in neigh[nid] if x in posmap)
+            m = statistics.median(ps) if ps else j  # 이웃 없으면 현재 위치 유지
+            keyed.append((m, j, nid))
+        keyed.sort(key=lambda t: (t[0], t[1]))
+        by_layer[L] = [nid for _, _, nid in keyed]
+
+    for it in range(4):
+        if it % 2 == 0:
+            for L in range(1, max_layer + 1):
+                _order(L, L - 1, preds)
+        else:
+            for L in range(max_layer - 1, -1, -1):
+                _order(L, L + 1, succ_dag)
 
     gnodes: list[GNode] = []
     for L in range(max_layer + 1):
@@ -432,7 +473,7 @@ def _layer_flow(spec: FlowSpec) -> NodeGraphSpec:
                                 variant=n.variant, shape=n.shape, sublabel=n.sublabel))
     return NodeGraphSpec(
         type="node-graph", title=spec.title, subtitle=spec.subtitle,
-        nodes=gnodes, edges=spec.edges, groups=spec.groups,
+        nodes=gnodes, edges=spec.edges, groups=spec.groups, legend=spec.legend,
         note=spec.note, caption=spec.caption,
         theme=spec.theme, font_size=spec.font_size,
     )

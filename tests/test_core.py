@@ -137,6 +137,21 @@ def test_groups_render_clean_and_flow_carries_them():
     assert len(_layer_flow(FlowSpec.model_validate(spec)).groups) == 1
 
 
+def test_multi_edge_and_legend():
+    spec = {
+        "type": "flow",
+        "nodes": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}],
+        "edges": [
+            {"from": "a", "to": "b", "arrow": True},
+            {"from": "a", "to": "b", "arrow": True, "label": "retry", "dashed": True},
+        ],
+        "legend": [{"label": "입력", "variant": "accent"}, {"label": "출력", "variant": "good"}],
+    }
+    r = render(spec)
+    assert r.warnings == []
+    assert "입력" in r.svg and "출력" in r.svg
+
+
 def test_long_node_text_wraps():
     long = "이것은 한 박스 안에 들어가기에는 지나치게 긴 설명 문장이라 자동 줄바꿈이 필요하다"
     r = render({"type": "node-graph", "nodes": [{"text": long, "row": 0, "col": 0}]})
