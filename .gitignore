@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+.uv/
+
+# caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# generated demo output
+examples/out.svg
+examples/out.png
+examples/probe.png
+
+# OS
+.DS_Store

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geny-svgforge"
+version = "0.1.0"
+description = "AI가 좌표 대신 의미(spec)만 내면 결정론적 레이아웃으로 깨끗한 다이어그램 SVG를 만드는 라이브러리"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jang HaRyeom (CocoRoF)" }]
+keywords = ["svg", "diagram", "ai", "mcp", "layout", "llm"]
+dependencies = [
+    "pydantic>=2.5",
+    "fonttools>=4.40",
+]
+
+[project.optional-dependencies]
+png = ["cairosvg>=2.7"]
+mcp = ["mcp>=1.2"]
+dev = ["pytest>=8", "cairosvg>=2.7"]
+
+[project.scripts]
+geny-svgforge = "geny_svgforge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geny_svgforge"]

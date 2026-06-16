@@ -1,0 +1,38 @@
+{
+  "type": "token-sequence",
+  "title": "Absolute position changes, relative pattern remains",
+  "subtitle": "중간에 토큰이 추가되면 뒤쪽 토큰의 절대 위치는 밀린다. 모델은 이런 이동에도 유지되는 관계를 배워야 한다.",
+  "theme": "light",
+  "rows": [
+    {
+      "label": "sentence A",
+      "tokens": [
+        { "text": "나는", "pos": "pos 0" },
+        { "text": "오늘", "pos": "pos 1" },
+        { "text": "밥을", "pos": "pos 2", "id": "a2" },
+        { "text": "먹었다", "pos": "pos 3", "id": "a3", "variant": "highlight" }
+      ]
+    },
+    {
+      "label": "sentence B",
+      "tokens": [
+        { "text": "나는", "pos": "pos 0" },
+        { "text": "정말", "pos": "pos 1", "variant": "accent" },
+        { "text": "오늘", "pos": "pos 2" },
+        { "text": "밥을", "pos": "pos 3", "id": "b3" },
+        { "text": "먹었다", "pos": "pos 4", "id": "b4", "variant": "highlight" }
+      ]
+    }
+  ],
+  "connectors": [
+    { "from": "a2", "to": "b3", "style": "arc", "color": "accent" }
+  ],
+  "note": {
+    "title": "모델이 배워야 하는 것",
+    "lines": [
+      "절대 position만 외우면 문장 길이 변화에 약하다.",
+      "상대 거리와 주변 패턴을 attention에서 같이 다룬다."
+    ]
+  },
+  "caption": "절대 위치가 바뀌어도 상대 토큰 관계가 유지되는 문장 예시"
+}
