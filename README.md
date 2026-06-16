@@ -1,22 +1,22 @@
 # geny-svgforge
 
-**AI가 좌표 대신 '의미(spec)'만 내면, 결정론적 레이아웃 엔진이 겹침·클리핑 없는 깨끗한 다이어그램 SVG를 만든다.**
+**Give an AI a semantic spec instead of raw coordinates, and a deterministic layout engine produces a clean diagram SVG with zero overlaps or clipping.**
 
-LLM에게 `<svg>`를 직접 쓰게 하면 텍스트 폭·박스 경계·곡선 경로·viewBox를 수치로 못 맞춰 요소가 겹치고 글자가 잘린다. geny-svgforge는 그 사이에 레이아웃 계층을 둔다. AI는 *"두 문장의 토큰 시퀀스, posN 라벨, A의 2번과 B의 3번을 곡선으로 연결, 우측 노트, 하단 캡션"* 이라는 JSON spec만 내고, 라이브러리가 폰트를 실측해 좌표를 계산하고 전체 bbox로 캔버스를 확정한다. → **겹침·오버플로가 구조적으로 불가능.**
+When an LLM writes `<svg>` by hand, it can't reliably reason about text widths, box bounds, curve paths, or the viewBox — so elements overlap and captions get clipped. geny-svgforge inserts a layout layer between the AI and the SVG. The AI emits only a JSON **spec** (*"two rows of labeled tokens, posN labels, connect A's token 2 to B's token 3 with a curve, a side note, a caption"*) — no coordinates. The library measures text with real font metrics, sizes every box, routes connectors around obstacles, and fits the viewBox to the content. **Overlap and overflow become structurally impossible.**
 
-> edit2ppt(AI가 PPT 구조를 내고 엔진이 렌더)·Contextifier(문서 구조 보존)와 같은 계보.
+> Same lineage as edit2ppt (AI emits PPT structure, engine renders) and Contextifier (structure-preserving document parsing).
 
 ---
 
-## 설치
+## Install
 
 ```bash
-pip install geny-svgforge            # 코어 (SVG)
-pip install 'geny-svgforge[png]'     # + PNG 내보내기 (cairosvg)
-pip install 'geny-svgforge[mcp]'     # + MCP 서버
+pip install geny-svgforge            # core (SVG)
+pip install 'geny-svgforge[png]'     # + PNG export (cairosvg)
+pip install 'geny-svgforge[mcp]'     # + MCP server
 ```
 
-## 빠른 시작 (Python)
+## Quickstart (Python)
 
 ```python
 from geny_svgforge import render
@@ -40,14 +40,14 @@ spec = {
         ]},
     ],
     "connectors": [{"from": "a2", "to": "b3", "color": "accent"}],
-    "note": {"title": "모델이 배워야 하는 것",
-             "lines": ["절대 position만 외우면 문장 길이 변화에 약하다.",
-                       "상대 거리와 주변 패턴을 attention에서 같이 다룬다."]},
-    "caption": "절대 위치가 바뀌어도 상대 토큰 관계가 유지되는 문장 예시",
+    "note": {"title": "What the model must learn",
+             "lines": ["Memorizing absolute positions is brittle to length changes.",
+                       "Relative distance and surrounding patterns are handled in attention."]},
+    "caption": "Same relative token relationship survives an absolute shift",
 }
 
-result = render(spec)        # 폰트 임베드된 이식성 SVG
-print(result.warnings)       # []  ← 겹침/클리핑 없음(린트 통과)
+result = render(spec)        # portable SVG with the used glyphs embedded
+print(result.warnings)       # []  ← no overlap / no clipping (lint passed)
 open("out.svg", "w").write(result.svg)
 ```
 
@@ -55,40 +55,91 @@ open("out.svg", "w").write(result.svg)
 
 ```bash
 geny-svgforge render spec.json -o out.svg
-geny-svgforge render spec.json -o out.png      # PNG ([png] 필요)
-geny-svgforge validate spec.json               # 렌더 전 검증
-geny-svgforge schema -o schema.json            # JSON Schema 덤프
+geny-svgforge render spec.json -o out.png      # PNG (requires [png])
+geny-svgforge validate spec.json               # validate before rendering
+geny-svgforge schema -o schema.json            # dump the JSON Schema
 ```
 
-## MCP (AI 에이전트 직결)
+## MCP server
+
+geny-svgforge ships an [MCP](https://modelcontextprotocol.io) server over **stdio** so any MCP-compatible agent can request diagrams. After `pip install 'geny-svgforge[mcp]'` the server is launched with:
 
 ```bash
+geny-svgforge-mcp                 # console script
+# or
 python -m geny_svgforge.mcp_server
 ```
-제공 툴: `render_diagram(spec)` → `{svg, width, height, warnings[]}`, `validate_diagram_spec(spec)`, `get_diagram_schema()`. 에이전트는 schema로 형식을 배우고, spec만 내고, warnings가 있으면 고쳐 다시 호출한다.
+
+### Tools exposed
+
+| Tool | Input | Returns |
+|---|---|---|
+| `get_diagram_schema` | – | JSON Schema describing the spec (the agent learns the format from this) |
+| `validate_diagram_spec` | `spec` | `{ ok, errors[], warnings[] }` — check before rendering |
+| `render_diagram` | `spec` | `{ svg, width, height, warnings[] }` — if `warnings` is non-empty, fix the spec and call again |
+
+### Client configuration
+
+Add the server to your MCP client config. The standard shape is an `mcpServers` map keyed by a server name.
+
+**Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`~/.cursor/mcp.json`), or **Claude Code** (`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "geny-svgforge": {
+      "command": "geny-svgforge-mcp"
+    }
+  }
+}
+```
+
+Zero-install with [uv](https://docs.astral.sh/uv/) (no prior `pip install` needed):
+
+```json
+{
+  "mcpServers": {
+    "geny-svgforge": {
+      "command": "uvx",
+      "args": ["--from", "geny-svgforge[mcp]", "geny-svgforge-mcp"]
+    }
+  }
+}
+```
+
+Claude Code can also add it from the CLI:
+
+```bash
+claude mcp add geny-svgforge -- uvx --from 'geny-svgforge[mcp]' geny-svgforge-mcp
+```
+
+A typical agent flow: call `get_diagram_schema` once to learn the format → emit a `spec` → call `render_diagram` → if `warnings` is non-empty, repair the spec and retry.
 
 ---
 
-## 동작 원리
+## How it works
 
-3-Layer: **Spec(JSON Schema) → Layout Engine → Renderer**.
+Three layers: **Spec (JSON Schema) → Layout Engine → Renderer**.
 
-- **폰트 실측** — `fontTools`로 glyph advance를 직접 합산해 텍스트 폭을 px로 계산(브라우저·헤드리스 무의존). 측정에 쓴 폰트를 그대로 SVG에 넣으므로 **측정 == 렌더**.
-- **결정론적 레이아웃** — 박스는 텍스트 폭에 맞춰 sizing, 커넥터는 행 사이 띠에 충돌 회피로 라우팅, 마지막에 모든 요소 bbox로 viewBox·패딩을 확정 → 클리핑 불가.
-- **폰트 임베드** — 사용된 글자만 subset해 base64 `@font-face`로 넣어 어디서든(브라우저·resvg) 동일 렌더. PNG는 설치 폰트로 cairosvg 렌더(`raster_safe`).
-- **린트** — 박스 겹침·캔버스 초과를 사후 검사. 0이어야 정상이며, AI에게 그대로 돌려줄 수 있는 안전망.
+- **Real font metrics** — text width is computed in pixels by summing glyph advances via `fontTools` (no browser, no headless engine). The same font used for measurement is embedded into the SVG, so **measured layout == rendered output**.
+- **Deterministic layout** — boxes are sized to their text, connectors are routed through the inter-row band away from boxes, and the viewBox/padding is derived from the bounding box of every element — so nothing can clip.
+- **Font embedding** — only the glyphs actually used are subset and inlined as a base64 `@font-face`, so the SVG renders identically everywhere (browsers, resvg). `to_png()` renders via the installed font (`raster_safe`) because cairosvg ignores embedded `@font-face`.
+- **Lint** — a post-layout pass flags box overlaps and canvas overflow. It should always be empty; if not, the warnings are returned to the agent so it can fix the spec.
 
-## 다이어그램 타입
+## Diagram types
 
-| 타입 | 설명 |
+| Type | Description |
 |---|---|
-| `token-sequence` | 위치 라벨 토큰 박스의 행 + 행 간 커넥터 + 옆 노트 + 캡션 |
+| `token-sequence` | Rows of position-labeled token boxes, with inter-row connectors, a side note, and a caption |
 
-(향후 `flow`, `grid`, `stack`, `callout` 등 추가 예정 — spec은 `type`으로 확장.)
+(`flow`, `grid`, `stack`, `callout`, … are planned — the spec is extensible via the `type` field.)
 
-## 로드맵
-- 충돌 자동 해소(제약/force), 시각 자기검수 루프(render→raster→멀티모달 판정→spec 수정→재렌더)
-- 다이어그램 타입·테마·템플릿 확장, 접근성(`title`/`desc`/aria)
+## Roadmap
 
-## 라이선스
-MIT. 폰트는 사용 환경의 폰트(예: SIL OFL의 Noto Sans CJK)를 측정·임베드한다 — 임베드 시 해당 폰트 라이선스를 따른다.
+- Automatic collision resolution (constraint / force based)
+- Visual self-repair loop: render → rasterize → multimodal critique → fix spec → re-render
+- More diagram types, themes, templates, accessibility (`<title>`/`<desc>`/aria)
+
+## License
+
+MIT. Text is measured against — and a subset is embedded from — a system font (e.g. SIL OFL Noto Sans CJK). When embedding, the embedded font's own license applies.
