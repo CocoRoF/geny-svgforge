@@ -11,7 +11,12 @@ from .spec import (
     json_schema,
 )
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _version
+
+    __version__ = _version("geny-svgforge")
+except Exception:  # noqa: BLE001
+    __version__ = "0.0.0"
 __all__ = [
     "render",
     "validate_spec",
