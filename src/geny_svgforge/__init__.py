@@ -4,6 +4,8 @@ from __future__ import annotations
 from .api import RenderResult, render, to_png, validate_spec
 from .spec import (
     Connector,
+    FlowSpec,
+    FNode,
     GEdge,
     GNode,
     NodeGraphSpec,
@@ -27,6 +29,8 @@ __all__ = [
     "RenderResult",
     "json_schema",
     "NodeGraphSpec",
+    "FlowSpec",
+    "FNode",
     "GNode",
     "GEdge",
     "TokenSequenceSpec",

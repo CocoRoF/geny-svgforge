@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Variant = Literal["default", "accent", "highlight", "muted", "good"]
 EdgeColor = Literal["accent", "blue", "gray", "good"]
+Shape = Literal["rect", "pill", "ellipse", "diamond", "cylinder", "hexagon", "parallelogram"]
 
 
 # ── 일반 node-graph ────────────────────────────────────────────
@@ -25,6 +26,7 @@ class GNode(BaseModel):
     col: int = Field(..., ge=0, description="그리드 열 (0=맨 왼쪽). 같은 col 은 세로로 정렬됨")
     id: Optional[str] = Field(None, description="edge 가 가리킬 고유 id")
     variant: Variant = Field("default", description="색상 변형")
+    shape: Shape = Field("rect", description="노드 도형")
     sublabel: Optional[str] = Field(None, description="박스 아래 작은 라벨 (예: 'pos 0', 'fast sin')")
 
 
@@ -63,6 +65,38 @@ class NodeGraphSpec(BaseModel):
     # 행/열 헤더. 키는 row/col 인덱스(JSON 에선 문자열 키도 자동 정수 변환).
     row_labels: dict[int, str] = Field(default_factory=dict, description="행 왼쪽 라벨 {row: text}")
     col_labels: dict[int, str] = Field(default_factory=dict, description="열 위 라벨 {col: text}")
+    note: Optional[Note] = None
+    caption: Optional[str] = None
+    theme: Literal["light", "dark"] = "light"
+    font_size: int = Field(15, ge=8, le=40)
+
+
+# ── flow (자동 레이어 배치) ────────────────────────────────────
+class FNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., description="고유 id (edge 가 가리킴)")
+    text: str
+    variant: Variant = "default"
+    shape: Shape = "rect"
+    sublabel: Optional[str] = None
+
+
+class FlowSpec(BaseModel):
+    """플로우차트. row/col 을 직접 주지 않고 edge 그래프 구조로 자동 배치한다.
+
+    layer(노드) = 시작 노드로부터의 최장 경로. direction='down' 이면 layer 가 행,
+    'right' 면 열이 된다. 같은 layer 안의 순서는 이웃 위치 기준으로 자동 정렬(교차 감소).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["flow"]
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    direction: Literal["down", "right"] = "down"
+    nodes: list[FNode] = Field(..., min_length=1)
+    edges: list[GEdge] = Field(default_factory=list)
     note: Optional[Note] = None
     caption: Optional[str] = None
     theme: Literal["light", "dark"] = "light"
@@ -134,12 +168,19 @@ class TokenSequenceSpec(BaseModel):
         )
 
 
-DiagramSpec = Union[NodeGraphSpec, TokenSequenceSpec]
+DiagramSpec = Union[NodeGraphSpec, FlowSpec, TokenSequenceSpec]
 
 
 def json_schema() -> dict:
-    """AI 에이전트가 형식을 학습할 JSON Schema (node-graph 우선)."""
+    """AI 에이전트가 형식을 학습할 JSON Schema."""
     return {
-        "oneOf": [NodeGraphSpec.model_json_schema(), TokenSequenceSpec.model_json_schema()],
-        "$comment": "Prefer 'node-graph' for general diagrams; 'token-sequence' is sugar.",
+        "oneOf": [
+            NodeGraphSpec.model_json_schema(),
+            FlowSpec.model_json_schema(),
+            TokenSequenceSpec.model_json_schema(),
+        ],
+        "$comment": (
+            "Pick by type: 'flow' = auto-laid-out flowchart (just nodes+edges, no row/col); "
+            "'node-graph' = explicit grid placement; 'token-sequence' = sugar."
+        ),
     }

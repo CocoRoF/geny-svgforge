@@ -134,10 +134,29 @@ Three layers: **Spec (JSON Schema) → Layout Engine → Renderer**.
 
 | Type | Description |
 |---|---|
-| `node-graph` | **General.** Grid-placed nodes (`row`/`col`, same col aligns) + arbitrary edges (auto-anchored, obstacle-avoiding), optional row/col headers, per-node sublabels, side note, caption. Covers box-and-arrow diagrams: embedding flows, matrices, pipelines, etc. |
+| `flow` | **Auto-layout flowchart.** Just give `nodes` + `edges` (no coordinates); the engine assigns layers (longest-path) and orders each layer to reduce crossings. `direction: down\|right`. Best for pipelines, decision flows. |
+| `node-graph` | **Explicit grid.** Nodes at `(row, col)` (same col aligns) + arbitrary edges (auto-anchored, obstacle-avoiding), optional row/col headers, per-node sublabels, side note, caption. Best for matrices, aligned diagrams. |
 | `token-sequence` | Convenience sugar over `node-graph` — rows of `pos`-labeled tokens + `connectors`. |
 
-Node `variant`: `default · accent · highlight · muted · good`. Edge `color`: `accent · blue · gray · good`, with optional `arrow` and `dashed`.
+Node `variant`: `default · accent · highlight · muted · good`. Node `shape`: `rect · pill · ellipse · diamond · cylinder · hexagon · parallelogram` (auto-sized to text). Edge `color`: `accent · blue · gray · good`, with optional `arrow`, `dashed`, and `label`.
+
+```python
+# flow: no coordinates — the engine lays it out
+render({
+    "type": "flow", "title": "RAG pipeline",
+    "nodes": [
+        {"id": "q", "text": "질문", "shape": "pill", "variant": "accent"},
+        {"id": "db", "text": "pgvector", "shape": "cylinder"},
+        {"id": "found", "text": "문서 있음?", "shape": "diamond", "variant": "highlight"},
+        {"id": "ans", "text": "답변", "shape": "pill", "variant": "good"},
+    ],
+    "edges": [
+        {"from": "q", "to": "db", "arrow": True, "label": "query"},
+        {"from": "db", "to": "found", "arrow": True},
+        {"from": "found", "to": "ans", "arrow": True, "label": "yes", "color": "good"},
+    ],
+})
+```
 
 ### Edge routing
 Edges connect the facing sides of two nodes with a cubic strictly **bounded by the rectangle spanning its endpoints** — it can never overshoot or pierce a box. Edges that span intermediate rows are detoured through an empty column-gap lane, so they don't cross the rows in between.

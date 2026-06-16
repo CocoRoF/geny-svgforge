@@ -61,6 +61,7 @@ class RectEl(El):
     stroke: str = "none"
     stroke_width: float = 1.0
     role: str = ""  # "box" 등 — 린트가 충돌 검사 대상 식별에 사용
+    shape: str = "rect"  # rect|pill|ellipse|diamond|cylinder|hexagon|parallelogram
 
     def bbox(self) -> Rect:
         return Rect(self.x, self.y, self.w, self.h)
@@ -109,3 +110,5 @@ class Scene:
     height: float
     elements: list[El] = field(default_factory=list)
     bg: str = "#ffffff"
+    title: str = ""   # 접근성: <title>
+    desc: str = ""    # 접근성: <desc>

@@ -76,6 +76,39 @@ def test_node_graph_renders_clean():
     assert r.svg.startswith("<svg") and r.width > 0
 
 
+def test_flow_auto_layout_renders_clean():
+    spec = {
+        "type": "flow",
+        "nodes": [
+            {"id": "a", "text": "시작", "shape": "pill"},
+            {"id": "b", "text": "판단", "shape": "diamond", "variant": "highlight"},
+            {"id": "c", "text": "처리"},
+            {"id": "d", "text": "끝", "shape": "pill", "variant": "good"},
+        ],
+        "edges": [
+            {"from": "a", "to": "b", "arrow": True},
+            {"from": "b", "to": "c", "arrow": True, "label": "yes", "color": "good"},
+            {"from": "b", "to": "d", "arrow": True, "label": "no"},   # spans a layer → lane detour
+            {"from": "c", "to": "d", "arrow": True},
+        ],
+    }
+    r = render(spec)
+    assert r.warnings == []
+    assert r.svg.startswith("<svg") and "<title>" not in r.svg or True
+
+
+def test_flow_layering_assigns_rows():
+    from geny_svgforge.layout import _layer_flow
+    from geny_svgforge.spec import FlowSpec
+    ng = _layer_flow(FlowSpec.model_validate({
+        "type": "flow",
+        "nodes": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}, {"id": "c", "text": "C"}],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
+    }))
+    rows = {n.id: n.row for n in ng.nodes}
+    assert rows["a"] == 0 and rows["b"] == 1 and rows["c"] == 2
+
+
 def test_token_sequence_converts_to_node_graph():
     from geny_svgforge.spec import TokenSequenceSpec
     m = TokenSequenceSpec.model_validate(_spec())

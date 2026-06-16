@@ -9,7 +9,7 @@ from .geometry import TextEl
 from .layout import build_scene
 from .lint import lint
 from .render import render_svg
-from .spec import NodeGraphSpec, TokenSequenceSpec
+from .spec import FlowSpec, NodeGraphSpec, TokenSequenceSpec
 
 
 @dataclass
@@ -20,14 +20,20 @@ class RenderResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def _coerce(spec: Union[dict, NodeGraphSpec, TokenSequenceSpec]):
-    if isinstance(spec, (NodeGraphSpec, TokenSequenceSpec)):
+_DICT_TYPES = {
+    "flow": FlowSpec,
+    "token-sequence": TokenSequenceSpec,
+    "node-graph": NodeGraphSpec,
+}
+
+
+def _coerce(spec: Union[dict, NodeGraphSpec, FlowSpec, TokenSequenceSpec]):
+    if isinstance(spec, (NodeGraphSpec, FlowSpec, TokenSequenceSpec)):
         return spec
     if isinstance(spec, dict):
-        if spec.get("type") == "token-sequence":
-            return TokenSequenceSpec.model_validate(spec)
-        return NodeGraphSpec.model_validate(spec)
-    raise TypeError("spec 은 dict 또는 NodeGraphSpec/TokenSequenceSpec 이어야 합니다.")
+        model = _DICT_TYPES.get(spec.get("type"), NodeGraphSpec)
+        return model.model_validate(spec)
+    raise TypeError("spec 은 dict 또는 NodeGraph/Flow/TokenSequence 모델이어야 합니다.")
 
 
 def _embed_css(scene) -> tuple[str, str]:

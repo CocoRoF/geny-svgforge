@@ -1,17 +1,20 @@
 """레이아웃 엔진.
 
-spec(node-graph) → 절대 좌표가 박힌 El 리스트 + 캔버스 크기(Scene).
+spec → 절대 좌표가 박힌 El 리스트 + 캔버스 크기(Scene).
 
-일반화된 그리드 모델: 노드를 (row, col) 그리드에 놓고, 같은 col 은 세로로 정렬한다.
-edge 는 두 노드의 마주보는 면(anchor)을 골라 **경계 내부로 한정된 cubic** 으로 잇는다
-→ 곡선이 끝점이 만드는 사각형 밖으로 절대 튀어나가지 않는다(overshoot/박스 관통 불가).
+- node-graph: 노드를 (row, col) 그리드에 놓는다(align="grid": 같은 col 세로 정렬).
+- flow: edge 그래프로 layer 를 자동 산출해 배치한다(align="center": layer 마다 가운데 정렬).
+edge 는 두 노드의 마주보는 면을 골라 **끝점이 만드는 사각형 내부로 한정된 cubic** 으로 잇는다
+→ overshoot / 박스 관통 불가. 여러 행을 건너뛰는 edge 는 빈 열-갭 레인으로 우회한다.
 모든 요소의 bbox 로 캔버스를 확정하므로 클리핑도 불가능하다.
 """
 from __future__ import annotations
 
+from collections import defaultdict
+
 from .fonts import FontMetrics, default_fonts
 from .geometry import PathEl, Rect, RectEl, Scene, TextEl
-from .spec import NodeGraphSpec, TokenSequenceSpec
+from .spec import FlowSpec, GNode, NodeGraphSpec, TokenSequenceSpec
 from .themes import get_theme
 
 PAD = 28
@@ -53,6 +56,23 @@ def _wrap(text: str, max_w: float, fm: FontMetrics, size: float) -> list[str]:
     return out
 
 
+def _shape_metrics(shape: str, w: float, h: float) -> tuple[float, float]:
+    """도형 안에 텍스트가 들어가도록 외곽 박스 크기를 보정."""
+    if shape == "pill":
+        return w + 12, h
+    if shape == "ellipse":
+        return w * 1.35, h * 1.28
+    if shape == "diamond":
+        return w * 1.5, h * 1.5
+    if shape == "hexagon":
+        return w * 1.25, h + 6
+    if shape == "parallelogram":
+        return w + min(w * 0.4, 48), h
+    if shape == "cylinder":
+        return w, h + 22
+    return w, h
+
+
 def _arrow_head(x: float, y: float, dir_: str, color: str, s: float = 5.0) -> PathEl:
     if dir_ == "down":
         d = f"M {x-s:.1f} {y-s*1.7:.1f} L {x+s:.1f} {y-s*1.7:.1f} L {x:.1f} {y:.1f} Z"
@@ -65,7 +85,7 @@ def _arrow_head(x: float, y: float, dir_: str, color: str, s: float = 5.0) -> Pa
     return PathEl(d, color, 0.0, color, Rect(x - s * 1.7, y - s * 1.7, s * 3.4, s * 3.4))
 
 
-def layout_node_graph(spec: NodeGraphSpec) -> Scene:
+def layout_node_graph(spec: NodeGraphSpec, align: str = "grid") -> Scene:
     reg, bold = default_fonts()
     th = get_theme(spec.theme)
     fs = float(spec.font_size)
@@ -86,20 +106,19 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
     nrows = max(n.row for n in nodes) + 1
     ncols = max(n.col for n in nodes) + 1
 
-    # 노드 측정
+    # 노드 측정 (도형 보정 포함)
     cell: dict[tuple[int, int], dict] = {}
     for n in nodes:
         lines = n.text.split("\n")
         tw = max((reg.text_width(ln, fs) for ln in lines), default=0)
         w = max(BOX_MIN_W, tw + BOX_PAD_X * 2)
         h = box_h0 + (len(lines) - 1) * line_h
-        cell[(n.row, n.col)] = {"node": n, "lines": lines, "w": w, "h": h}
+        w, h = _shape_metrics(n.shape, w, h)
+        cell[(n.row, n.col)] = {"node": n, "lines": lines, "w": w, "h": h, "shape": n.shape}
 
-    col_w = [BOX_MIN_W] * ncols
     row_h = [float(box_h0)] * nrows
     row_has_sub = [False] * nrows
     for (r, c), info in cell.items():
-        col_w[c] = max(col_w[c], info["w"])
         row_h[r] = max(row_h[r], info["h"])
         if info["node"].sublabel:
             row_has_sub[r] = True
@@ -108,28 +127,45 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
     if spec.row_labels:
         rl_w = max(reg.text_width(t, rl_sz) for t in spec.row_labels.values()) + 16
 
+    grid_x0 = PAD + rl_w
+
+    # 열 좌표 산출 — grid: col 정렬 / center: 행마다 가운데 정렬
+    if align == "grid":
+        col_w = [BOX_MIN_W] * ncols
+        for (r, c), info in cell.items():
+            col_w[c] = max(col_w[c], info["w"])
+        col_x = []
+        x = grid_x0
+        for c in range(ncols):
+            col_x.append(x)
+            x += col_w[c] + COL_GAP
+        grid_right = x - COL_GAP
+        content_w = grid_right - grid_x0
+    else:
+        row_pack: dict[int, float] = {}
+        for r in range(nrows):
+            ws = [cell[(r, c)]["w"] for c in range(ncols) if (r, c) in cell]
+            row_pack[r] = sum(ws) + COL_GAP * max(0, len(ws) - 1)
+        content_w = max(row_pack.values()) if row_pack else BOX_MIN_W
+        grid_right = grid_x0 + content_w
+
     els: list = []
+    header_right = 0.0
     y = PAD
     if spec.title:
         w = bold.text_width(spec.title, title_sz)
         els.append(TextEl(PAD, y + title_sz * 0.82, spec.title, title_sz, th["title"], "bold", "start", w))
+        header_right = max(header_right, PAD + w)
         y += title_sz * 1.25
     if spec.subtitle:
         w = reg.text_width(spec.subtitle, sub_sz)
         els.append(TextEl(PAD, y + sub_sz * 0.82, spec.subtitle, sub_sz, th["subtitle"], "normal", "start", w))
+        header_right = max(header_right, PAD + w)
         y += sub_sz * 1.7
     y += fs * 0.6
 
-    grid_x0 = PAD + rl_w
-    col_x = []
-    x = grid_x0
-    for c in range(ncols):
-        col_x.append(x)
-        x += col_w[c] + COL_GAP
-    grid_right = x - COL_GAP
-
-    # 열 라벨 (위)
-    if spec.col_labels:
+    # 열 라벨 (위) — grid 모드만
+    if align == "grid" and spec.col_labels:
         for c, lbl in spec.col_labels.items():
             if 0 <= c < ncols:
                 w = reg.text_width(lbl, col_sz)
@@ -141,7 +177,6 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
     row_bottom = [0.0] * nrows
     id_rect: dict[str, Rect] = {}
     id_row: dict[str, int] = {}
-    id_col: dict[str, int] = {}
     ROW_GAP = fs * 2.0
 
     cur = y
@@ -151,24 +186,29 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
         if r in spec.row_labels:
             w = reg.text_width(spec.row_labels[r], rl_sz)
             els.append(TextEl(PAD, cur + bh / 2 + rl_sz * 0.34, spec.row_labels[r], rl_sz, th["row_label"], "normal", "start", w))
-        for c in range(ncols):
-            info = cell.get((r, c))
-            if not info:
-                continue
-            n, lines, w, h = info["node"], info["lines"], info["w"], info["h"]
-            bx = col_x[c] + (col_w[c] - w) / 2
-            box = Rect(bx, cur, w, h)
+        present = sorted(c for (rr, c) in cell if rr == r)
+        if align == "center":
+            xcur = grid_x0 + (content_w - row_pack[r]) / 2
+        for c in present:
+            info = cell[(r, c)]
+            n, lines, w, h, shape = info["node"], info["lines"], info["w"], info["h"], info["shape"]
+            if align == "grid":
+                bx = col_x[c] + (col_w[c] - w) / 2
+            else:
+                bx = xcur
+                xcur += w + COL_GAP
+            box = Rect(bx, cur + (bh - h) / 2, w, h)
             fill, stroke, txt = th[f"token_{n.variant}"]
-            els.append(RectEl(box.x, box.y, box.w, box.h, BOX_RX, fill, stroke, 1.6, role="box"))
+            els.append(RectEl(box.x, box.y, box.w, box.h, BOX_RX, fill, stroke, 1.6, role="box", shape=shape))
             n_lines = len(lines)
+            ty_off = 6 if shape == "cylinder" else 0
             for li, ln in enumerate(lines):
                 lw = reg.text_width(ln, fs)
-                ly = box.cy - (n_lines - 1) * line_h / 2 + li * line_h + fs * 0.34
+                ly = box.cy - (n_lines - 1) * line_h / 2 + li * line_h + fs * 0.34 + ty_off
                 els.append(TextEl(box.cx, ly, ln, fs, txt, "normal", "middle", lw))
             if n.id:
                 id_rect[n.id] = box
                 id_row[n.id] = r
-                id_col[n.id] = c
             if n.sublabel:
                 sw = reg.text_width(n.sublabel, slab_sz)
                 els.append(TextEl(box.cx, cur + bh + slab_sz + 2, n.sublabel, slab_sz, th["pos_label"], "normal", "middle", sw))
@@ -176,7 +216,7 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
         cur = row_bottom[r] + ROW_GAP
     grid_bottom = cur - ROW_GAP
 
-    # ── edges (경계 내부 한정 라우팅) ──
+    # ── edges (경계 내부 한정 라우팅 + 라벨) ──
     for e in spec.edges:
         a = id_rect.get(e.from_)
         b = id_rect.get(e.to)
@@ -188,16 +228,15 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
         rs, rt = id_row.get(e.from_, 0), id_row.get(e.to, 0)
         lane = None
         if abs(dy) >= abs(dx):  # 세로
-            if dy >= 0:  # b 가 아래
+            if dy >= 0:
                 sx, sy = a.cx, row_bottom[rs]
                 ex, ey = b.cx, b.y
                 end_dir = "down"
-            else:        # b 가 위
+            else:
                 sx, sy = a.cx, a.y
                 ex, ey = b.cx, row_bottom[rt]
                 end_dir = "up"
             if abs(rt - rs) >= 2:
-                # 중간 행을 건너뛰는 edge → 열 옆 빈 레인으로 우회 (박스 관통 방지)
                 lane = max(a.right, b.right) + COL_GAP * 0.5
                 seg = ey - sy
                 d = (f"M {sx:.1f} {sy:.1f} "
@@ -206,9 +245,11 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
                      f"C {lane:.1f} {ey - 8:.1f}, {ex:.1f} {ey - 24:.1f}, {ex:.1f} {ey:.1f}") \
                     if seg > 80 else \
                     f"M {sx:.1f} {sy:.1f} C {lane:.1f} {sy:.1f}, {lane:.1f} {ey:.1f}, {ex:.1f} {ey:.1f}"
+                lx, ly = lane, (sy + ey) / 2
             else:
                 my = (sy + ey) / 2
                 d = f"M {sx:.1f} {sy:.1f} C {sx:.1f} {my:.1f}, {ex:.1f} {my:.1f}, {ex:.1f} {ey:.1f}"
+                lx, ly = (sx + ex) / 2, my
         else:                   # 가로
             if dx >= 0:
                 sx, sy = a.right, a.cy
@@ -220,13 +261,17 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
                 end_dir = "left"
             mx = (sx + ex) / 2
             d = f"M {sx:.1f} {sy:.1f} C {mx:.1f} {sy:.1f}, {mx:.1f} {ey:.1f}, {ex:.1f} {ey:.1f}"
+            lx, ly = mx, (sy + ey) / 2
         xs = [sx, ex] + ([lane] if lane is not None else [])
-        lo_x, hi_x = min(xs), max(xs)
-        lo_y, hi_y = min(sy, ey), max(sy, ey)
-        approx = Rect(lo_x, lo_y, max(1.0, hi_x - lo_x), max(1.0, hi_y - lo_y))
+        approx = Rect(min(xs), min(sy, ey), max(1.0, max(xs) - min(xs)), max(1.0, abs(ey - sy)))
         els.append(PathEl(d, col, 2.4, "none", approx, dashed=e.dashed))
         if e.arrow:
             els.append(_arrow_head(ex, ey, end_dir, col))
+        if e.label:
+            lw = reg.text_width(e.label, slab_sz)
+            els.append(RectEl(lx - lw / 2 - 5, ly - slab_sz * 0.72, lw + 10, slab_sz + 5,
+                              (slab_sz + 5) / 2, th["bg"], "none", 0.0))
+            els.append(TextEl(lx, ly + slab_sz * 0.30, e.label, slab_sz, th["row_label"], "normal", "middle", lw))
 
     content_bottom = grid_bottom
     right_edge = grid_right
@@ -256,25 +301,75 @@ def layout_node_graph(spec: NodeGraphSpec) -> Scene:
         content_bottom = max(content_bottom, note_y + h)
         right_edge = note_x + NOTE_W
 
-    title_w = els[0].bbox().right if (spec.title and els) else 0
-    canvas_w = max(right_edge, title_w) + PAD
-    canvas_w = max(canvas_w, PAD * 2 + 200)
+    cap_w = reg.text_width(spec.caption, caption_sz) if spec.caption else 0.0
+    canvas_w = max(right_edge + PAD, header_right + PAD, cap_w + 2 * PAD, PAD * 2 + 200)
 
     y = content_bottom
     if spec.caption:
         y += fs * 1.4
-        w = reg.text_width(spec.caption, caption_sz)
-        els.append(TextEl(canvas_w / 2, y, spec.caption, caption_sz, th["caption"], "normal", "middle", w))
+        els.append(TextEl(canvas_w / 2, y, spec.caption, caption_sz, th["caption"], "normal", "middle", cap_w))
         y += caption_sz * 0.4
     canvas_h = y + PAD
 
     card = RectEl(0.5, 0.5, canvas_w - 1, canvas_h - 1, 18, th["bg"], th["card_stroke"], 1.0)
-    return Scene(canvas_w, canvas_h, [card, *els], bg=th["bg"])
+    desc = spec.subtitle or spec.caption or ""
+    return Scene(canvas_w, canvas_h, [card, *els], bg=th["bg"], title=spec.title or "", desc=desc)
+
+
+def _layer_flow(spec: FlowSpec) -> NodeGraphSpec:
+    """flow → layer 자동 산출 후 node-graph 로 변환 (longest-path layering + barycenter 정렬)."""
+    by_id = {n.id: n for n in spec.nodes}
+    order_idx = {n.id: i for i, n in enumerate(spec.nodes)}
+    edges = [(e.from_, e.to) for e in spec.edges if e.from_ in by_id and e.to in by_id]
+    preds: dict[str, list[str]] = defaultdict(list)
+    for u, v in edges:
+        preds[v].append(u)
+
+    layer = {nid: 0 for nid in by_id}
+    for _ in range(len(by_id)):
+        changed = False
+        for u, v in edges:
+            if layer[v] < layer[u] + 1:
+                layer[v] = layer[u] + 1
+                changed = True
+        if not changed:
+            break
+
+    max_layer = max(layer.values()) if layer else 0
+    by_layer: dict[int, list[str]] = defaultdict(list)
+    for nid in by_id:
+        by_layer[layer[nid]].append(nid)
+    for L in by_layer:
+        by_layer[L].sort(key=lambda nid: order_idx[nid])
+    # barycenter 정렬로 교차 감소
+    for _ in range(2):
+        for L in range(1, max_layer + 1):
+            pos_prev = {nid: i for i, nid in enumerate(by_layer[L - 1])}
+            def bary(nid: str) -> float:
+                ps = [pos_prev[p] for p in preds[nid] if p in pos_prev]
+                return sum(ps) / len(ps) if ps else float(order_idx[nid])
+            by_layer[L].sort(key=bary)
+
+    gnodes: list[GNode] = []
+    for L in range(max_layer + 1):
+        for o, nid in enumerate(by_layer[L]):
+            n = by_id[nid]
+            row, col = (o, L) if spec.direction == "right" else (L, o)
+            gnodes.append(GNode(text=n.text, row=row, col=col, id=n.id,
+                                variant=n.variant, shape=n.shape, sublabel=n.sublabel))
+    return NodeGraphSpec(
+        type="node-graph", title=spec.title, subtitle=spec.subtitle,
+        nodes=gnodes, edges=spec.edges, note=spec.note, caption=spec.caption,
+        theme=spec.theme, font_size=spec.font_size,
+    )
 
 
 def build_scene(spec) -> Scene:
-    if isinstance(spec, TokenSequenceSpec) or getattr(spec, "type", None) == "token-sequence":
-        spec = spec.to_node_graph()
-    if isinstance(spec, NodeGraphSpec) or getattr(spec, "type", None) == "node-graph":
-        return layout_node_graph(spec)
+    """타입별 디스패치 (새 타입은 여기에 분기 추가)."""
+    if isinstance(spec, TokenSequenceSpec):
+        return layout_node_graph(spec.to_node_graph(), align="grid")
+    if isinstance(spec, FlowSpec):
+        return layout_node_graph(_layer_flow(spec), align="center")
+    if isinstance(spec, NodeGraphSpec):
+        return layout_node_graph(spec, align="grid")
     raise ValueError(f"지원하지 않는 다이어그램 타입: {getattr(spec, 'type', spec)}")
