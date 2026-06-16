@@ -1,9 +1,10 @@
 """선언적 다이어그램 spec.
 
-AI 에이전트는 좌표를 한 줄도 쓰지 않고, '무엇을 그릴지'만 이 spec(JSON)으로 기술한다.
-레이아웃·좌표·충돌 회피는 전부 엔진(layout.py)이 결정론적으로 계산한다.
+AI 에이전트는 좌표를 한 줄도 쓰지 않고 '무엇을 그릴지'만 이 spec(JSON)으로 기술한다.
+좌표·정렬·커넥터 라우팅·캔버스 크기는 전부 엔진(layout.py)이 결정론적으로 계산한다.
 
-pydantic 모델이라 JSON Schema 자동 생성 + 입력 검증이 공짜로 따라온다.
+핵심 타입은 일반화된 **node-graph**: 그리드(row/col)에 노드를 놓고, 임의의 노드 사이를
+견고하게 라우팅되는 edge 로 연결한다. token-sequence 는 node-graph 로 변환되는 sugar.
 """
 from __future__ import annotations
 
@@ -11,33 +12,30 @@ from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TokenVariant = Literal["default", "accent", "highlight", "muted"]
+Variant = Literal["default", "accent", "highlight", "muted", "good"]
+EdgeColor = Literal["accent", "blue", "gray", "good"]
 
 
-class Token(BaseModel):
+# ── 일반 node-graph ────────────────────────────────────────────
+class GNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(..., description="박스 안에 표시할 텍스트")
-    pos: Optional[str] = Field(None, description="박스 아래 작은 라벨 (예: 'pos 0')")
-    id: Optional[str] = Field(None, description="connector 가 가리킬 고유 id")
-    variant: TokenVariant = Field("default", description="색상 변형")
+    text: str = Field(..., description="박스 안 텍스트 (\\n 로 줄바꿈 가능)")
+    row: int = Field(..., ge=0, description="그리드 행 (0=맨 위)")
+    col: int = Field(..., ge=0, description="그리드 열 (0=맨 왼쪽). 같은 col 은 세로로 정렬됨")
+    id: Optional[str] = Field(None, description="edge 가 가리킬 고유 id")
+    variant: Variant = Field("default", description="색상 변형")
+    sublabel: Optional[str] = Field(None, description="박스 아래 작은 라벨 (예: 'pos 0', 'fast sin')")
 
 
-class Row(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    label: Optional[str] = Field(None, description="행 왼쪽 위 라벨 (예: 'sentence A')")
-    tokens: list[Token] = Field(..., min_length=1)
-
-
-class Connector(BaseModel):
+class GEdge(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    from_: str = Field(..., alias="from", description="시작 토큰 id")
-    to: str = Field(..., description="끝 토큰 id")
-    style: Literal["arc"] = "arc"
-    color: Literal["accent", "blue", "gray"] = "accent"
-    arrow: bool = Field(False, description="끝에 화살표 머리 표시")
+    from_: str = Field(..., alias="from", description="시작 노드 id")
+    to: str = Field(..., description="끝 노드 id")
+    color: EdgeColor = "gray"
+    arrow: bool = Field(False, description="끝에 화살표 머리")
+    dashed: bool = False
     label: Optional[str] = None
 
 
@@ -48,11 +46,59 @@ class Note(BaseModel):
     lines: list[str] = Field(default_factory=list)
 
 
-class TokenSequenceSpec(BaseModel):
-    """위치 라벨이 달린 토큰 박스의 행들과, 행 사이를 잇는 커넥터·옆 노트·캡션.
+class NodeGraphSpec(BaseModel):
+    """그리드에 놓인 노드 + 임의의 edge 로 구성된 일반 다이어그램.
 
-    첨부된 'Absolute position changes, relative pattern remains' 예시가 이 타입이다.
+    박스-화살표 도식 대부분(임베딩 흐름, 행렬, 파이프라인 등)을 표현한다.
+    같은 col 의 노드는 세로로 정렬되고, edge 는 박스를 뚫지 않게 라우팅된다.
     """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["node-graph"]
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    nodes: list[GNode] = Field(..., min_length=1)
+    edges: list[GEdge] = Field(default_factory=list)
+    # 행/열 헤더. 키는 row/col 인덱스(JSON 에선 문자열 키도 자동 정수 변환).
+    row_labels: dict[int, str] = Field(default_factory=dict, description="행 왼쪽 라벨 {row: text}")
+    col_labels: dict[int, str] = Field(default_factory=dict, description="열 위 라벨 {col: text}")
+    note: Optional[Note] = None
+    caption: Optional[str] = None
+    theme: Literal["light", "dark"] = "light"
+    font_size: int = Field(15, ge=8, le=40)
+
+
+# ── token-sequence (sugar) ─────────────────────────────────────
+class Token(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    pos: Optional[str] = None
+    id: Optional[str] = None
+    variant: Variant = "default"
+
+
+class Row(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: Optional[str] = None
+    tokens: list[Token] = Field(..., min_length=1)
+
+
+class Connector(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_: str = Field(..., alias="from")
+    to: str = Field(...)
+    style: Literal["arc"] = "arc"
+    color: EdgeColor = "accent"
+    arrow: bool = False
+    label: Optional[str] = None
+
+
+class TokenSequenceSpec(BaseModel):
+    """위치 라벨 토큰 박스의 행들. 내부적으로 node-graph 로 변환되어 렌더된다."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -64,13 +110,36 @@ class TokenSequenceSpec(BaseModel):
     note: Optional[Note] = None
     caption: Optional[str] = None
     theme: Literal["light", "dark"] = "light"
-    font_size: int = Field(15, ge=8, le=40, description="본문 토큰 글자 크기(px)")
+    font_size: int = Field(15, ge=8, le=40)
+
+    def to_node_graph(self) -> NodeGraphSpec:
+        nodes: list[GNode] = []
+        row_labels: dict[int, str] = {}
+        for ri, row in enumerate(self.rows):
+            if row.label:
+                row_labels[ri] = row.label
+            for ci, tok in enumerate(row.tokens):
+                nodes.append(GNode(
+                    text=tok.text, row=ri, col=ci, id=tok.id,
+                    variant=tok.variant, sublabel=tok.pos,
+                ))
+        edges = [
+            GEdge.model_validate({"from": c.from_, "to": c.to, "color": c.color, "arrow": c.arrow, "label": c.label})
+            for c in self.connectors
+        ]
+        return NodeGraphSpec(
+            type="node-graph", title=self.title, subtitle=self.subtitle,
+            nodes=nodes, edges=edges, row_labels=row_labels,
+            note=self.note, caption=self.caption, theme=self.theme, font_size=self.font_size,
+        )
 
 
-# 향후 타입 추가 시 Union 으로 확장 (discriminated on `type`)
-DiagramSpec = Union[TokenSequenceSpec]
+DiagramSpec = Union[NodeGraphSpec, TokenSequenceSpec]
 
 
 def json_schema() -> dict:
-    """AI 에이전트가 형식을 학습할 수 있는 JSON Schema."""
-    return TokenSequenceSpec.model_json_schema()
+    """AI 에이전트가 형식을 학습할 JSON Schema (node-graph 우선)."""
+    return {
+        "oneOf": [NodeGraphSpec.model_json_schema(), TokenSequenceSpec.model_json_schema()],
+        "$comment": "Prefer 'node-graph' for general diagrams; 'token-sequence' is sugar.",
+    }

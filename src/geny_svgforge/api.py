@@ -9,7 +9,7 @@ from .geometry import TextEl
 from .layout import build_scene
 from .lint import lint
 from .render import render_svg
-from .spec import TokenSequenceSpec
+from .spec import NodeGraphSpec, TokenSequenceSpec
 
 
 @dataclass
@@ -20,10 +20,14 @@ class RenderResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def _coerce(spec: Union[dict, TokenSequenceSpec]) -> TokenSequenceSpec:
-    if isinstance(spec, TokenSequenceSpec):
+def _coerce(spec: Union[dict, NodeGraphSpec, TokenSequenceSpec]):
+    if isinstance(spec, (NodeGraphSpec, TokenSequenceSpec)):
         return spec
-    return TokenSequenceSpec.model_validate(spec)
+    if isinstance(spec, dict):
+        if spec.get("type") == "token-sequence":
+            return TokenSequenceSpec.model_validate(spec)
+        return NodeGraphSpec.model_validate(spec)
+    raise TypeError("spec 은 dict 또는 NodeGraphSpec/TokenSequenceSpec 이어야 합니다.")
 
 
 def _embed_css(scene) -> tuple[str, str]:
@@ -55,7 +59,7 @@ def _embed_css(scene) -> tuple[str, str]:
 
 
 def render(
-    spec: Union[dict, TokenSequenceSpec],
+    spec: Union[dict, NodeGraphSpec, TokenSequenceSpec],
     embed_font: bool = True,
     raster_safe: bool = False,
 ) -> RenderResult:
@@ -80,7 +84,7 @@ def render(
     return RenderResult(svg=svg, width=scene.width, height=scene.height, warnings=warnings)
 
 
-def to_png(spec: Union[dict, TokenSequenceSpec], scale: float = 2.0) -> bytes:
+def to_png(spec: Union[dict, NodeGraphSpec, TokenSequenceSpec], scale: float = 2.0) -> bytes:
     """PNG 바이트. cairosvg 필요(optional dep 'png'). @font-face 미지원 래스터라이저를 위해
     실제 설치 폰트로 렌더한다(설치 폰트가 없으면 resvg + 임베드 SVG 사용 권장)."""
     import cairosvg

@@ -18,38 +18,42 @@ pip install 'geny-svgforge[mcp]'     # + MCP server
 
 ## Quickstart (Python)
 
+The general type is **`node-graph`**: place nodes on a `(row, col)` grid (same `col` aligns vertically) and connect any nodes with edges. The engine sizes boxes, routes edges around obstacles, and fits the canvas.
+
 ```python
 from geny_svgforge import render
 
 spec = {
-    "type": "token-sequence",
-    "title": "Absolute position changes, relative pattern remains",
-    "rows": [
-        {"label": "sentence A", "tokens": [
-            {"text": "나는", "pos": "pos 0"},
-            {"text": "오늘", "pos": "pos 1"},
-            {"text": "밥을", "pos": "pos 2", "id": "a2"},
-            {"text": "먹었다", "pos": "pos 3", "variant": "highlight"},
-        ]},
-        {"label": "sentence B", "tokens": [
-            {"text": "나는", "pos": "pos 0"},
-            {"text": "정말", "pos": "pos 1", "variant": "accent"},
-            {"text": "오늘", "pos": "pos 2"},
-            {"text": "밥을", "pos": "pos 3", "id": "b3"},
-            {"text": "먹었다", "pos": "pos 4", "variant": "highlight"},
-        ]},
+    "type": "node-graph",
+    "title": "Token embedding + positional encoding",
+    "row_labels": {0: "token", 1: "embedding", 2: "position", 3: "input"},
+    "nodes": [
+        {"text": "나는", "row": 0, "col": 0, "id": "t0", "sublabel": "0"},
+        {"text": "밥을", "row": 0, "col": 1, "id": "t1", "sublabel": "1"},
+        {"text": "E[나는]", "row": 1, "col": 0, "id": "e0", "variant": "accent"},
+        {"text": "E[밥을]", "row": 1, "col": 1, "id": "e1", "variant": "accent"},
+        {"text": "PE[0]", "row": 2, "col": 0, "id": "p0", "variant": "highlight"},
+        {"text": "PE[1]", "row": 2, "col": 1, "id": "p1", "variant": "highlight"},
+        {"text": "x0 = E + PE", "row": 3, "col": 0, "id": "x0"},
+        {"text": "x1 = E + PE", "row": 3, "col": 1, "id": "x1"},
     ],
-    "connectors": [{"from": "a2", "to": "b3", "color": "accent"}],
-    "note": {"title": "What the model must learn",
-             "lines": ["Memorizing absolute positions is brittle to length changes.",
-                       "Relative distance and surrounding patterns are handled in attention."]},
-    "caption": "Same relative token relationship survives an absolute shift",
+    "edges": [
+        {"from": "t0", "to": "e0", "color": "gray", "arrow": True},
+        {"from": "e0", "to": "x0", "color": "blue", "arrow": True},   # spans the position row → routed around it
+        {"from": "p0", "to": "x0", "color": "accent", "arrow": True},
+        {"from": "t1", "to": "e1", "color": "gray", "arrow": True},
+        {"from": "e1", "to": "x1", "color": "blue", "arrow": True},
+        {"from": "p1", "to": "x1", "color": "accent", "arrow": True},
+    ],
+    "caption": "same hidden size, element-wise add at each position",
 }
 
 result = render(spec)        # portable SVG with the used glyphs embedded
 print(result.warnings)       # []  ← no overlap / no clipping (lint passed)
 open("out.svg", "w").write(result.svg)
 ```
+
+`token-sequence` is also accepted as convenience sugar (rows of tokens with `pos` labels and `connectors`); it is converted to `node-graph` internally.
 
 ## CLI
 
@@ -130,9 +134,13 @@ Three layers: **Spec (JSON Schema) → Layout Engine → Renderer**.
 
 | Type | Description |
 |---|---|
-| `token-sequence` | Rows of position-labeled token boxes, with inter-row connectors, a side note, and a caption |
+| `node-graph` | **General.** Grid-placed nodes (`row`/`col`, same col aligns) + arbitrary edges (auto-anchored, obstacle-avoiding), optional row/col headers, per-node sublabels, side note, caption. Covers box-and-arrow diagrams: embedding flows, matrices, pipelines, etc. |
+| `token-sequence` | Convenience sugar over `node-graph` — rows of `pos`-labeled tokens + `connectors`. |
 
-(`flow`, `grid`, `stack`, `callout`, … are planned — the spec is extensible via the `type` field.)
+Node `variant`: `default · accent · highlight · muted · good`. Edge `color`: `accent · blue · gray · good`, with optional `arrow` and `dashed`.
+
+### Edge routing
+Edges connect the facing sides of two nodes with a cubic strictly **bounded by the rectangle spanning its endpoints** — it can never overshoot or pierce a box. Edges that span intermediate rows are detoured through an empty column-gap lane, so they don't cross the rows in between.
 
 ## Roadmap
 

@@ -54,8 +54,34 @@ def test_validation_rejects_empty_tokens():
 
 def test_schema_exposes_fields():
     s = json_schema()
-    assert "rows" in s["properties"]
-    assert s["properties"]["type"]
+    variants = s["oneOf"]
+    props = [set(v.get("properties", {})) for v in variants]
+    assert any("nodes" in p for p in props)   # node-graph
+    assert any("rows" in p for p in props)    # token-sequence
+
+
+def test_node_graph_renders_clean():
+    spec = {
+        "type": "node-graph",
+        "row_labels": {0: "a", 1: "b"},
+        "nodes": [
+            {"text": "토큰", "row": 0, "col": 0, "id": "n0", "sublabel": "0"},
+            {"text": "임베딩", "row": 1, "col": 0, "id": "n1"},
+            {"text": "곁", "row": 0, "col": 1, "id": "m0"},
+        ],
+        "edges": [{"from": "n0", "to": "n1", "color": "blue", "arrow": True}],
+    }
+    r = render(spec)
+    assert r.warnings == []
+    assert r.svg.startswith("<svg") and r.width > 0
+
+
+def test_token_sequence_converts_to_node_graph():
+    from geny_svgforge.spec import TokenSequenceSpec
+    m = TokenSequenceSpec.model_validate(_spec())
+    ng = m.to_node_graph()
+    assert ng.type == "node-graph"
+    assert len(ng.nodes) == 9  # 4 + 5 tokens
 
 
 def test_embed_font_default_on():

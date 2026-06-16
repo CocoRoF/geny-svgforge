@@ -97,6 +97,7 @@ class PathEl(El):
     fill: str = "none"
     # 경로의 대략 bbox (라우팅 시 알고 있음). 린트 정보용.
     approx: Optional[Rect] = None
+    dashed: bool = False
 
     def bbox(self) -> Optional[Rect]:
         return self.approx

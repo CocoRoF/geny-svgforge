@@ -34,9 +34,10 @@ def render_svg(scene: Scene, font_family: str = FONT_FAMILY, font_faces_css: str
                 f"{escape(el.text)}</text>"
             )
         elif isinstance(el, PathEl):
+            dash = ' stroke-dasharray="6 5"' if el.dashed else ""
             out.append(
                 f'<path d="{el.d}" fill="{el.fill}" stroke="{el.stroke}" '
-                f'stroke-width="{_fmt(el.stroke_width)}" stroke-linecap="round"/>'
+                f'stroke-width="{_fmt(el.stroke_width)}" stroke-linecap="round"{dash}/>'
             )
     out.append("</svg>")
     return "\n".join(out)
